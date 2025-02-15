@@ -1,10 +1,8 @@
 # Google watchlist scraper
 
-Scrapes Google's ["my watchlist" collection](https://www.google.com/search?q=my+watchlist) and syncs them to [my Letterboxd watchlist](https://letterboxd.com/dohnutt/watchlist/)
+Scrapes Google's ["my watchlist" collection](https://www.google.com/search?q=my+watchlist), retrieves metadata from [TMDB](https://www.themoviedb.org/) and syncs them to an RSS file.
 
-🛑 Perhaps should have looked it up first, but the Letterboxd API is in closed beta.
-
-⚠️ WIP, not done. Only scrapes Google watchlist as of right now.
+⚠️ WIP, not done.
 
 ---
 
@@ -14,15 +12,11 @@ Scrapes Google's ["my watchlist" collection](https://www.google.com/search?q=my+
 
 2. Run `npm install`
 
-3. Find and open your Google watchlist here: https://www.google.com/interests/saved
+3. Find and open your Google watchlist here: [https://www.google.com/interests/saved]
 
 4. Click the "Share" button, choose "View only link", and click "Continue". Copy the resulting link.
 
-5. Create a `.env` file with the following contents in the project's root directory. Replace the URL with the link you generated in step 4.
-
-```dotenv
-GOOGLE_WATCHLIST_URL='https://www.google.com/collections/s/list/aJMxPOnLboE4SU1ChkOhP3ZBP0bQdf/U8F-lG_6BmM'
-```
+5. Copy `.env.example` and rename to `.env`. Replace the `GOOGLE_WATCHLIST_URL` with the link you generated in step 4, and [get a token from TMDB](https://developer.themoviedb.org/reference/intro/getting-started)
 
 6. Run `npm run start` to scrape and return your watchlist.
 
