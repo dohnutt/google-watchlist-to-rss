@@ -12,6 +12,7 @@ require('dotenv').config();
 
 const watchlistFile = 'index.xml';
 const cacheFile = 'cache.json';
+const unknownsFile = 'unknowns.json';
 const tmdb = 'https://api.themoviedb.org/3/search/multi?include_adult=false&language=en-US&page=1';
 const tmdbOptions = {
 	method: 'GET',
@@ -37,7 +38,7 @@ async function scrape() {
 	let items = [];
 	let prevFirstItem = null;
 
-	console.log('Scraping new data from your watchlist at ' + process.env.GOOGLE_WATCHLIST_URL);
+	console.log('Checking for new data from your watchlist at ' + process.env.GOOGLE_WATCHLIST_URL);
 
 	for (let i = 0; i <= 5; i++) {
 		await axios.request({
@@ -80,6 +81,8 @@ async function scrape() {
 	items = items.filter(arr => arr.length);
 	items = items.flat(Infinity);
 
+	console.log();
+
 	return await items;
 }
 
@@ -97,7 +100,8 @@ async function collectMovieData(movies) {
 			movies.slice(i, i + 5).map(movie => fetchMovieData(movie))
 		);
 
-		movieData.push(...batchResults);
+		// Filter out bad results
+		movieData.push(...batchResults.filter(result => result));
 		
 		// Wait for 0.5 seconds before the next batch to handle rate-limiting
 		await new Promise(resolve => setTimeout(resolve, 500));
@@ -108,7 +112,18 @@ async function collectMovieData(movies) {
 
 // Fetch TMDB data for each movie
 async function fetchMovieData(movie) {
-	let data = await fetch(
+	// fallback data
+	let data = {
+		id: 0,
+		title: movie,
+		releaseDate: null,
+		releaseYear: null,
+		mediaType: null,
+		dateAdded: Date.now(),
+		googleSearchUrl: 'https://google.ca/search?q=' + encodeURI(movie)
+	};
+
+	return await fetch(
 		tmdb + '&query=' + encodeURI(movie),
 		tmdbOptions
 	)
@@ -116,7 +131,7 @@ async function fetchMovieData(movie) {
 	.then(json => json.results)
 	.then(results => {
 		if (results.length === 0) {
-			return;
+			return data;
 		}
 
 		let result = results[0];
@@ -138,44 +153,61 @@ async function fetchMovieData(movie) {
 		}
 	})
 	.catch(err => console.error(err));
-
-	return data;
 }
 
-// Helper to check if the cache is still fresh
-function lessThanOneHourAgo(date) {
+// Check if the cache is still fresh
+function isCacheFresh(date) {
     const HOUR = 1000 * 60 * 60;
     const anHourAgo = Date.now() - HOUR;
-	const fresh = date > anHourAgo;
+	const fresh = date > anHourAgo; // less than an hour ago
 
-	console.log(fresh ? 'Cache is fresh.' : 'Cache is expired.');
+	return fresh;
+}
 
-	return true;
+// Check if the cache is the same as the watchlist
+function isCacheCurrent(cached, scraped) {
+	// Compares the first ten items of the cache to the first ten items of the scrape
+	const cachedFirstTen = cached.slice(0, 10);
+	const scrapedFirstTen = scraped.slice(0,10);
+	const fresh = !Object.entries(cachedFirstTen).every(item => scrapedFirstTen.includes(item));
+
+	//console.log('Cached: ', cachedFirstTen.map(i => i.title));
+	//console.log('Scraped: ', scrapedFirstTen.map(i => i));
+
+	console.log('Checking if cache is current... ' + (fresh ? '👍' : '💩'));
+
 	return fresh;
 }
 
 // Gets watchlist, either from cached json file, or by scraping a new one
 async function getWatchlist() {
-	if (fs.existsSync(watchlistFile)) {
-		cachedData = fs.readFileSync(cacheFile, {encoding: 'utf8'});
-		cachedData = JSON.parse(cachedData);
+	cached = {};
+
+	console.log();
+	console.log('------');
+
+	if (fs.existsSync(cacheFile)) {
+		cached = fs.readFileSync(cacheFile, {encoding: 'utf8'});
+		cached = JSON.parse(cached);
 	}
 
-	if ('generated' in cachedData && lessThanOneHourAgo(cachedData.generated) && cachedData.data.length) {
-		console.log('✅ Gathered from ' + cacheFile)
-		data = cachedData.data;
+	if ('generated' in cached && isCacheFresh(cached.generated)) {
+		console.log('✅ Using ' + cacheFile)
+		data = cached.data;
 	} else {
 		const scrapedData = await scrape();
 		data = await collectMovieData(scrapedData);
 
-		createCacheFile(data);
-		//createUnknowns(data);
+		if ('data' in cached && cached.data.length) {
+			if (!isCacheCurrent(cached.data, scrapedData)) {
+				// If the cache file is not current, regenerate it
+				createCacheFile(data);
+			}
+		}
 	}
-
-	console.log(data[0]);
-
+	
 	createRssFile(data);
-	//console.log(data);
+	createUnknowns(data);
 
 	return data;
 }
@@ -192,8 +224,9 @@ function createRssFile(data) {
 
 	if (data.length) {
 		data.forEach(movie => {
+			let releaseYear = movie.releaseYear ? ' (' + movie.releaseYear + ')' : '';
 			feed.addItem({
-				title: movie.title + '(' + movie.releaseYear + ')',
+				title: movie.title + releaseYear,
 				id: movie.id,
 				date: new Date(movie.dateAdded),
 			});
@@ -202,7 +235,7 @@ function createRssFile(data) {
 	
 	fs.writeFile(watchlistFile, feed.rss2(),
 		{encoding: 'utf8'},
-		(err) => err ? console.error(err) : console.log('✅ Generated ' + watchlistFile)
+		(err) => err ? console.error(err) : console.log('✅ Generated RSS at ' + watchlistFile)
 	);
 }
 
@@ -215,7 +248,7 @@ function createCacheFile(data) {
 	
 	fs.writeFile(cacheFile, JSON.stringify(data),
 		{encoding: 'utf8'},
-		(err) => err ? console.error(err) : console.log('✅ Generated ' + cacheFile)
+		(err) => err ? console.error(err) : console.log('✅ Generated new ' + cacheFile)
 	);
 }
 
@@ -223,6 +256,7 @@ function createUnknowns(data) {
 	let map = {};
 	let duplicates = [];
 	let people = data.filter(item => item.mediaType === 'person');
+	let unmatched = data.filter(item => item.id === 0);
 
 	data.forEach(item => {
 		const keyValue = item.id;
@@ -233,9 +267,16 @@ function createUnknowns(data) {
 		}
 	});
 
+	let unknowns = [ ...duplicates, ...people, ...unmatched];
+	
+	console.log(
+		'Looking for unknowns... ' +
+		(unknowns.length === 0 ? 'None found' : '⚠️  Found ' + unknowns.length)
+	);
+
 	data = {
 		generated: Date.now(),
-		data: [ ...duplicates, ...people]
+		data: unknowns
 	}
 
 	// Generate JSON cache
