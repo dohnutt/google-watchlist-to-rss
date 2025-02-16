@@ -29,5 +29,5 @@ export default async (request: Request) => {
 
 // Netlify scheduled function cron syntax
 export const config: Config = {
-    schedule: '0 */3 * * *' // every 3 hours
+    schedule: '50 */11 * * *' // “At minute 50 past every 11th hour.”
 };
