@@ -234,7 +234,7 @@ async function init() {
 
 // Generate RSS watchlist file
 function createRssFile(data) {
-	const feed = new Feed({
+	let feed = new Feed({
 		title: 'Google watchlist',
 		description: 'Watchlist feature from Google, in RSS format',
 		id: 'https://google-watchlist-rss.netlify.app',
@@ -247,13 +247,16 @@ function createRssFile(data) {
 			let releaseYear = movie.releaseYear ? ' (' + movie.releaseYear + ')' : '';
 			feed.addItem({
 				title: movie.title + releaseYear,
-				id: movie.id,
-				date: new Date(movie.dateAdded),
+				id: movie.title + releaseYear,
+				//date: new Date(movie.dateAdded),
 			});
 		});
 	}
 	
-	fs.writeFile(rssFile, feed.rss2(),
+	feed = feed.rss2();
+	feed = feed.replaceAll('<guid>', '<guid isPermaLink="false">'); // lame fix
+	
+	fs.writeFile(rssFile, feed,
 		{encoding: 'utf8'},
 		(err) => err ? console.error(err) : console.log('✅ Generated RSS at ' + rssFile)
 	);
