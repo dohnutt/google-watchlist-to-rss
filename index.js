@@ -3,16 +3,16 @@
  * and create an RSS feed
  */
 
+require('dotenv').config();
 const fs = require('fs');
 const jsdom = require('jsdom');
 const { JSDOM } = jsdom;
 const axios = require('axios');
 const { Feed } = require('feed');
-require('dotenv').config();
 
-const watchlistFile = 'index.xml';
-const cacheFile = 'cache.json';
-const unknownsFile = 'unknowns.json';
+const rssFile = './site/index.xml';
+const watchlistFile = './site/watchlist.json';
+const unknownsFile = './site/unknowns.json';
 const tmdb = 'https://api.themoviedb.org/3/search/multi?include_adult=false&language=en-US&page=1';
 const tmdbOptions = {
 	method: 'GET',
@@ -29,7 +29,6 @@ const slugify = str => {
 		.replace(/[\s_-]+/g, '-')
 		.replace(/^-+|-+$/g, '');
 }
-let watchlist = [];
 
 // Scrape Google's 'my watchlist'
 async function scrape() {
@@ -38,7 +37,7 @@ async function scrape() {
 	let items = [];
 	let prevFirstItem = null;
 
-	console.log('Checking for new data from your watchlist at ' + process.env.GOOGLE_WATCHLIST_URL);
+	console.log('👀 Checking for new data from your watchlist at ' + process.env.GOOGLE_WATCHLIST_URL);
 
 	for (let i = 0; i <= 5; i++) {
 		await axios.request({
@@ -70,7 +69,7 @@ async function scrape() {
 			} else {
 				// Set first item for next iteration
 				prevFirstItem = items[i][0];
-				console.log((i + 1) + ': ' + prevFirstItem);
+				console.log('Page ' + (i + 1) + ': ' + prevFirstItem);
 			}
 			
 		}).catch(error => {
@@ -89,7 +88,7 @@ async function scrape() {
 // Fetch IDs for each movie
 async function collectMovieData(movies) {
 	console.log()
-	console.log('Getting data for ' + movies.length + ' movies');
+	console.log('Getting TMDB metadata for ' + movies.length + ' movies');
 	const movieData = [];
   
 	for (let i = 0; i < movies.length; i += 5) {
@@ -155,17 +154,19 @@ async function fetchMovieData(movie) {
 	.catch(err => console.error(err));
 }
 
-// Check if the cache is still fresh
-function isCacheFresh(date) {
+// Check if the watchlist is still fresh
+function isWatchlistFresh(date) {
     const HOUR = 1000 * 60 * 60;
     const anHourAgo = Date.now() - HOUR;
 	const fresh = date > anHourAgo; // less than an hour ago
 
+	console.log('How long since last cache update? ' + (fresh ? "⏳ < 1hr" : "⌛️ > 1hr"));
+
 	return fresh;
 }
 
-// Check if the cache is the same as the watchlist
-function isCacheCurrent(cached, scraped) {
+// Check if the cached list is the same as the scraped list
+function isWatchlistCurrent(cached, scraped) {
 	// Compares the first ten items of the cache to the first ten items of the scrape
 	const cachedFirstTen = cached.slice(0, 10);
 	const scrapedFirstTen = scraped.slice(0,10);
@@ -180,29 +181,30 @@ function isCacheCurrent(cached, scraped) {
 }
 
 // Gets watchlist, either from cached json file, or by scraping a new one
-async function getWatchlist() {
+async function init() {
 	cached = {};
+	scrapedData = [];
 
 	console.log();
 	console.log('------');
 
-	if (fs.existsSync(cacheFile)) {
-		cached = fs.readFileSync(cacheFile, {encoding: 'utf8'});
+	if (fs.existsSync(watchlistFile)) {
+		cached = fs.readFileSync(watchlistFile, {encoding: 'utf8'});
 		cached = JSON.parse(cached);
 	}
 
-	if ('generated' in cached && isCacheFresh(cached.generated)) {
-		console.log('✅ Using ' + cacheFile)
+	if ('generated' in cached && isWatchlistFresh(cached.generated)) {
+		console.log('✅ Using ' + watchlistFile)
 		data = cached.data;
 	} else {
 		const scrapedData = await scrape();
 		data = await collectMovieData(scrapedData);
+	}
 
-		if ('data' in cached && cached.data.length) {
-			if (!isCacheCurrent(cached.data, scrapedData)) {
-				// If the cache file is not current, regenerate it
-				createCacheFile(data);
-			}
+	// If the cached watchlist file is not current, regenerate it
+	if ('data' in cached && cached.data.length) {
+		if (!isWatchlistCurrent(cached.data, scrapedData)) {
+			createWatchlistFile(data);
 		}
 	}
 	
@@ -233,22 +235,22 @@ function createRssFile(data) {
 		});
 	}
 	
-	fs.writeFile(watchlistFile, feed.rss2(),
+	fs.writeFile(rssFile, feed.rss2(),
 		{encoding: 'utf8'},
-		(err) => err ? console.error(err) : console.log('✅ Generated RSS at ' + watchlistFile)
+		(err) => err ? console.error(err) : console.log('✅ Generated RSS at ' + rssFile)
 	);
 }
 
-// Generate JSON cache file
-function createCacheFile(data) {
+// Generate JSON watchlist file
+function createWatchlistFile(data) {
 	data = {
 		generated: Date.now(),
 		data: data
 	}
 	
-	fs.writeFile(cacheFile, JSON.stringify(data),
+	fs.writeFile(watchlistFile, JSON.stringify(data),
 		{encoding: 'utf8'},
-		(err) => err ? console.error(err) : console.log('✅ Generated new ' + cacheFile)
+		(err) => err ? console.error(err) : console.log('✅ Generated new ' + watchlistFile)
 	);
 }
 
@@ -296,5 +298,5 @@ function createUnknowns(data) {
 // Run it on a cron often
 
 (async () => {
-	watchlist = await getWatchlist();
+	await init();
 })()
