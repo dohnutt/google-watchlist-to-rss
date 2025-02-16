@@ -18,7 +18,7 @@ Scrapes Google's ["my watchlist" collection](https://www.google.com/search?q=my+
 
 5. [Get an API token from TMDB](https://developer.themoviedb.org/reference/intro/getting-started)
 
-6. Copy `.env.example` and rename to `.env`. Set `GOOGLE_WATCHLIST_URL` to the URL you generated in step 4, and set `TMDB_API_TOKEN` with your TMDB token.
+6. Copy `.env.example` and rename to `.env`. Set `GOOGLE_WATCHLIST_URL` to the URL you generated in step 4, and set `TMDB_API_TOKEN` to your TMDB token.
 
 7. Run `npm run start` to scrape and return your watchlist.
 
