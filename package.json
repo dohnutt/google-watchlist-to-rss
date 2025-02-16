@@ -11,6 +11,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@netlify/functions": "^3.0.0",
     "axios": "^1.6.2",
     "dotenv": "^16.3.1",
     "feed": "^4.2.2",
