@@ -185,27 +185,36 @@ async function init() {
 	let cached = {};
 	let scraped = [];
 	let data = [];
+	const cacheFileExists = fs.existsSync(watchlistFile);
 
 	console.log();
 	console.log('------');
 
-	if (fs.existsSync(watchlistFile)) {
+	if (cacheFileExists) {
 		cached = fs.readFileSync(watchlistFile, {encoding: 'utf8'});
 		cached = JSON.parse(cached);
 	}
 
-	scraped = await scrape();
+	if (!isWatchlistFresh(cached.generated)) {
+		scraped = await scrape();
+	}
 
-	if ('data' in cached) {
+	if ('data' in cached && cached.data.length) {
 		data = cached.data;
 
-		if (cached.data.length && !isWatchlistCurrent(cached.data, scraped)) {
+		if (!isWatchlistCurrent(cached.data, scraped)) {
 			// If the cached watchlist file is not current, regenerate it
 			data = await collectMovieData(scraped);
 			createWatchlistFile(data);
 		} else {
 			console.log('✅ Using cached watchlist file ' + watchlistFile)
 		}
+	}
+
+	if (!cacheFileExists) {
+		// If the cached watchlist file doesn't exist, generate one
+		data = await collectMovieData(scraped);
+		createWatchlistFile(data);
 	}
 
 	createRssFile(data);
