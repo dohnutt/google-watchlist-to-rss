@@ -1,8 +1,7 @@
-# Local Netlify folder
 .netlify
 .DS_Store
 node_modules/
 .env
 index.xml
-cache.json
+watchlist.json
 unknowns.json
