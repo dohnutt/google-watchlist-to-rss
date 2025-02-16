@@ -13,6 +13,7 @@ const { Feed } = require('feed');
 const rssFile = './_site/index.xml';
 const watchlistFile = './_cache/watchlist.json';
 const unknownsFile = './_site/unknowns.json';
+const overrideCache = process.env.OVERRIDE_CACHE ?? false;
 const tmdb = 'https://api.themoviedb.org/3/search/multi?include_adult=false&language=en-US&page=1';
 const tmdbOptions = {
 	method: 'GET',
@@ -21,14 +22,7 @@ const tmdbOptions = {
 		Authorization: 'Bearer ' + process.env.TMDB_API_TOKEN
 	}
 }
-const slugify = str => {
-	return str
-		.toLowerCase()
-		.trim()
-		.replace(/[^\w\s-]/g, '')
-		.replace(/[\s_-]+/g, '-')
-		.replace(/^-+|-+$/g, '');
-}
+
 
 // Scrape Google's 'my watchlist'
 async function scrape() {
@@ -154,30 +148,39 @@ async function fetchMovieData(movie) {
 	.catch(err => console.error(err));
 }
 
+function slugify(str) {
+	return str
+		.toLowerCase()
+		.trim()
+		.replace(/[^\w\s-]/g, '')
+		.replace(/[\s_-]+/g, '-')
+		.replace(/^-+|-+$/g, '');
+}
+
 // Check if the watchlist is still fresh
-function isWatchlistFresh(date) {
+function isCacheFresh(date) {
     const HOUR = 1000 * 60 * 60;
     const anHourAgo = Date.now() - HOUR;
 	const fresh = date > anHourAgo; // less than an hour ago
 
 	console.log('How long since last cache update? ' + (fresh ? "⏳ < 1hr" : "⌛️ > 1hr"));
 
-	return fresh;
+	return overrideCache ? !overrideCache : fresh;
 }
 
 // Check if the cached list is the same as the scraped list
-function isWatchlistCurrent(cached, scraped) {
+function isCacheCurrent(cached, scraped) {
 	// Compares the first ten items of the cache to the first ten items of the scrape
-	const cachedFirstTen = cached.slice(0, 10);
-	const scrapedFirstTen = scraped.slice(0,10);
-	const fresh = !Object.entries(cachedFirstTen).every(item => scrapedFirstTen.includes(item));
+	const cachedFirstTen = JSON.stringify(cached.slice(0, 10).map(i => slugify(i.title)));
+	const scrapedFirstTen = JSON.stringify(scraped.slice(0,10).map(i => slugify(i)));
+	const fresh = cachedFirstTen === scrapedFirstTen;
 
-	//console.log('Cached: ', cachedFirstTen.map(i => i.title));
-	//console.log('Scraped: ', scrapedFirstTen.map(i => i));
+	//console.log('Cached: ', cachedFirstTen);
+	//console.log('Scraped: ', scrapedFirstTen);
 
 	console.log('Checking if cache is current... ' + (fresh ? '👍' : '💩'));
 
-	return fresh;
+	return overrideCache ? !overrideCache : fresh;
 }
 
 // Gets watchlist, either from cached json file, or by scraping a new one
@@ -185,41 +188,46 @@ async function init() {
 	let cached = {};
 	let scraped = [];
 	let data = [];
-	const cacheFileExists = fs.existsSync(watchlistFile);
+	let cacheFileExists = fs.existsSync(watchlistFile);
+	if (cacheFileExists) {
+		cached = fs.readFileSync(watchlistFile, {encoding: 'utf8'});
+		cached = JSON.parse(cached ? cached : '{}');
+		cacheFileExists = cacheFileExists && 'generated' in cached && 'data' in cached;
+	}
 
 	console.log();
 	console.log('------');
 	console.log('👋 Starting watchlist-to-RSS!');
 
 	if (cacheFileExists) {
-		cached = fs.readFileSync(watchlistFile, {encoding: 'utf8'});
-		cached = JSON.parse(cached);
-	}
+		// if cached watchlist is stale, re-scrape from Google
+		scraped = !isCacheFresh(cached.generated) ? await scrape() : scraped;
 
-	if (!isWatchlistFresh(cached.generated)) {
-		scraped = await scrape();
-	}
+		if (cached.data.length) {
+			data = cached.data;
 
-	if ('data' in cached && cached.data.length) {
-		data = cached.data;
+			console.log('Cache length ', cached.data.length);
 
-		if (!isWatchlistCurrent(cached.data, scraped)) {
-			// If the cached watchlist file is not current, regenerate it
-			data = await collectMovieData(scraped);
-			createWatchlistFile(data);
-		} else {
-			console.log('✅ Using cached watchlist file ' + watchlistFile)
+			if (scraped.length && !isCacheCurrent(cached.data, scraped)) {
+				// If the cached watchlist file is not current, regenerate it
+				console.log('💸 Updating cached watchlist file ' + watchlistFile);
+				data = await collectMovieData(scraped);
+				data = combineWatchlists(data, cached.data);
+				createWatchlistFile(data);
+			} else {
+				console.log('✅ Using cached watchlist file ' + watchlistFile)
+			}
 		}
-	}
-
-	if (!cacheFileExists) {
+	} else {
+		console.log('🌱 Starting fresh')
 		// If the cached watchlist file doesn't exist, generate one
+		scraped = await scrape();
 		data = await collectMovieData(scraped);
 		createWatchlistFile(data);
 	}
 
 	createRssFile(data);
-	createUnknowns(data);
+	//createUnknownsFile(data);
 
 	return data;
 }
@@ -249,7 +257,7 @@ function createRssFile(data) {
 		{encoding: 'utf8'},
 		(err) => err ? console.error(err) : console.log('✅ Generated RSS at ' + rssFile)
 	);
-}
+} 
 
 // Generate JSON watchlist file
 function createWatchlistFile(data) {
@@ -257,14 +265,14 @@ function createWatchlistFile(data) {
 		generated: Date.now(),
 		data: data
 	}
-	
+
 	fs.writeFile(watchlistFile, JSON.stringify(data),
 		{encoding: 'utf8'},
 		(err) => err ? console.error(err) : console.log('✅ Generated new ' + watchlistFile)
 	);
 }
 
-function createUnknowns(data) {
+function createUnknownsFile(data) {
 	let map = {};
 	let duplicates = [];
 	let people = data.filter(item => item.mediaType === 'person');
@@ -298,15 +306,25 @@ function createUnknowns(data) {
 	);
 }
 
-// It's working. Changes page with `?pageNumber` URL param
-// It pulls each page of results and groups them.
-// 
-// Then queries TMDB to retrieve metadata for each movie.
-// Create a cache from the data so it doesn't have to fully scrape every time.
-// Then create an RSS feed from the data
-//
-// Run it on a cron often
+function combineWatchlists(newData, cachedData) {
+	// Build a map of cached movies by id for quick lookup.
+	const cachedById = cachedData.reduce((map, movie) => {
+		map[movie.id] = movie;
+		return map;
+	}, {});
+	
+	// For each movie in newData, check if it exists in cache.
+	return newData.map(movie => {
+		if (cachedById[movie.id]) {
+			// Preserve the cached dateAdded value.
+			return { ...movie, dateAdded: cachedById[movie.id].dateAdded };
+		}
+		// If not in cache, keep the new data (which already includes a dateAdded)
+		return movie;
+	});
+}
 
 (async () => {
+	// Run it
 	await init();
 })()
