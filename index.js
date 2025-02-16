@@ -79,34 +79,55 @@ async function scrape() {
 	return await items;
 }
 
-// Fetch IDs for each movie
-async function collectMovieData(movies) {
-	console.log()
+// Fetch metadata for each movie
+// Skip movies already in the cache
+async function collectMovieData(movies, cachedData = []) {
 	console.log('Getting TMDB metadata for ' + movies.length + ' movies');
-	const movieData = [];
-  
-	for (let i = 0; i < movies.length; i += 5) {
-		console.log('Progress... ' + (i + 5));
-		
-		// Fetch a batch of 5 movies concurrently
-		const batchResults = await Promise.all(
-			movies.slice(i, i + 5).map(movie => fetchMovieData(movie))
-		);
 
-		// Filter out bad results
+	// Build a lookup map for cached movies using a slugified title as key.
+	const cachedMap = cachedData.reduce((map, movie) => {
+		map[slugify(movie.title)] = movie;
+		return map;
+	}, {});
+
+	const movieData = [];
+
+	// Process movies in batches to avoid rate-limiting issues.
+	for (let i = 0; i < movies.length; i += 5) {
+		//console.log('Progress... ' + (i + 5));
+		
+		// Get a batch of movies from the scraped list
+		const batch = movies.slice(i, i + 5);
+		
+		// For each movie in the batch, check if it exists in the cache.
+		const batchPromises = batch.map(movieTitle => {
+			const key = slugify(movieTitle);
+			if (cachedMap[key] && !overrideCache) {
+				console.log(`- Skipping cached: ${movieTitle}`);
+				// Return the cached movie data as a resolved promise.
+				return Promise.resolve(cachedMap[key]);
+			} else {
+				console.log(`+ Querying for: ${movieTitle}`);
+				return fetchMovieData(movieTitle);
+			}
+		});
+		
+		// Wait for the current batch to finish.
+		const batchResults = await Promise.all(batchPromises);
 		movieData.push(...batchResults.filter(result => result));
 		
-		// Wait for 0.5 seconds before the next batch to handle rate-limiting
+		// Wait 0.5 seconds before processing the next batch.
 		await new Promise(resolve => setTimeout(resolve, 500));
 	}
-  
+
 	return movieData;
-  }
+}
+  
 
 // Fetch TMDB data for each movie
-async function fetchMovieData(movie) {
+async function fetchMovieData(movie, resultIndex = 0) {
 	// fallback data
-	let data = {
+	const fallback = {
 		id: 0,
 		title: movie,
 		releaseDate: null,
@@ -124,15 +145,23 @@ async function fetchMovieData(movie) {
 	.then(json => json.results)
 	.then(results => {
 		if (results.length === 0) {
-			return data;
+			return fallback;
 		}
 
-		let result = results[0];
+		let result = results[resultIndex];
 
 		if (result) {
 			let title = result.title || result.name;
 			let releaseDate = result.release_date || result.first_air_date;
 			let year = new Date(releaseDate).getFullYear();
+
+			if (title == 'Silicon Valley') {
+				console.log('+++++++')
+				console.log('Silicon Valley', result);
+				console.log('Release date', releaseDate);
+				console.log('Release year', year);
+				console.log('+++++++')
+			}
 
 			return {
 				id: result.id,
@@ -144,8 +173,13 @@ async function fetchMovieData(movie) {
 				googleSearchUrl: 'https://google.ca/search?q=' + encodeURI(title + ' ' + '(' + year + ')')
 			}
 		}
+
+		return fallback;
 	})
-	.catch(err => console.error(err));
+	.catch(err => {
+		console.error(err)
+		return fallback;
+	});
 }
 
 function slugify(str) {
@@ -211,7 +245,7 @@ async function init() {
 			if (scraped.length && !isCacheCurrent(cached.data, scraped)) {
 				// If the cached watchlist file is not current, regenerate it
 				console.log('💸 Updating cached watchlist file ' + watchlistFile);
-				data = await collectMovieData(scraped);
+				data = await collectMovieData(scraped, cached.data);
 				data = combineWatchlists(data, cached.data);
 				createWatchlistFile(data);
 			} else {
@@ -227,7 +261,7 @@ async function init() {
 	}
 
 	createRssFile(data);
-	//createUnknownsFile(data);
+	await createUnknownsFile(data);
 
 	return data;
 }
@@ -275,39 +309,59 @@ function createWatchlistFile(data) {
 	);
 }
 
-function createUnknownsFile(data) {
-	let map = {};
-	let duplicates = [];
-	let people = data.filter(item => item.mediaType === 'person');
-	let unmatched = data.filter(item => item.id === 0);
+async function createUnknownsFile(data) {
+	// Items that came back as "person" or weren't matched (id === 0)
+	const people = data.filter(item => item.mediaType === 'person');
+	const unmatched = data.filter(item => item.id === 0);
 
+	// Identify duplicates based on slugified titles.
+	// Count occurrences and then collect items beyond the first occurrence.
+	const titleCount = {};
+	const duplicates = [];
 	data.forEach(item => {
-		const keyValue = item.id;
-		if (map[keyValue]) {
-			duplicates.push(item);
-		} else {
-			map[keyValue] = true;
+		const key = slugify(item.title);
+		titleCount[key] = (titleCount[key] || 0) + 1;
+		if (titleCount[key] > 1) {
+		duplicates.push(item);
 		}
 	});
 
-	let unknowns = [ ...duplicates, ...people, ...unmatched];
-	
+	// For each duplicate, re-run TMDB query using resultIndex=1.
+	// If a new result is found (with a different id), use that; otherwise, keep the duplicate.
+	const reRunDuplicates = [];
+	for (const dup of duplicates) {
+		console.log(`Re-querying TMDB for duplicate: ${dup.title}`);
+		const fixed = await fetchMovieData(dup.title, 1);
+		if (fixed && fixed.id !== dup.id) {
+			reRunDuplicates.push(fixed);
+		} else {
+			reRunDuplicates.push(dup);
+		}
+	}
+
+	// Combine all unknown items.
+	const unknowns = [...people, ...unmatched, ...reRunDuplicates];
+
 	console.log(
 		'Looking for unknowns... ' +
 		(unknowns.length === 0 ? '👍 None found' : '⚠️  Found ' + unknowns.length)
 	);
 
-	data = {
+	const unknownsData = {
 		generated: Date.now(),
 		data: unknowns
-	}
+	};
 
-	// Generate JSON cache
-	fs.writeFile(unknownsFile, JSON.stringify(data),
-		{encoding: 'utf8'},
-		(err) => err ? console.error(err) : console.log('✅ Generated ' + unknownsFile)
+	fs.writeFile(
+		unknownsFile,
+		JSON.stringify(unknownsData, null, 2),
+		{ encoding: 'utf8' },
+		err =>
+		err
+			? console.error(err)
+			: console.log('✅ Generated unknowns file at ' + unknownsFile)
 	);
-}
+}  
 
 function combineWatchlists(newData, cachedData) {
 	// Build a map of cached movies by id for quick lookup.
