@@ -5,3 +5,4 @@ node_modules/
 index.xml
 watchlist.json
 unknowns.json
+*.bak
