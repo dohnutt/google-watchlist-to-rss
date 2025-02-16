@@ -10,9 +10,9 @@ const { JSDOM } = jsdom;
 const axios = require('axios');
 const { Feed } = require('feed');
 
-const rssFile = './site/index.xml';
-const watchlistFile = './site/watchlist.json';
-const unknownsFile = './site/unknowns.json';
+const rssFile = './_site/index.xml';
+const watchlistFile = './_cache/watchlist.json';
+const unknownsFile = './_site/unknowns.json';
 const tmdb = 'https://api.themoviedb.org/3/search/multi?include_adult=false&language=en-US&page=1';
 const tmdbOptions = {
 	method: 'GET',
@@ -189,6 +189,7 @@ async function init() {
 
 	console.log();
 	console.log('------');
+	console.log('👋 Starting watchlist-to-RSS!');
 
 	if (cacheFileExists) {
 		cached = fs.readFileSync(watchlistFile, {encoding: 'utf8'});
