@@ -182,8 +182,9 @@ function isWatchlistCurrent(cached, scraped) {
 
 // Gets watchlist, either from cached json file, or by scraping a new one
 async function init() {
-	cached = {};
-	scrapedData = [];
+	let cached = {};
+	let scraped = [];
+	let data = [];
 
 	console.log();
 	console.log('------');
@@ -193,21 +194,20 @@ async function init() {
 		cached = JSON.parse(cached);
 	}
 
-	if ('generated' in cached && isWatchlistFresh(cached.generated)) {
-		console.log('✅ Using ' + watchlistFile)
-		data = cached.data;
-	} else {
-		const scrapedData = await scrape();
-		data = await collectMovieData(scrapedData);
-	}
+	scraped = await scrape();
 
-	// If the cached watchlist file is not current, regenerate it
-	if ('data' in cached && cached.data.length) {
-		if (!isWatchlistCurrent(cached.data, scrapedData)) {
+	if ('data' in cached) {
+		data = cached.data;
+
+		if (cached.data.length && !isWatchlistCurrent(cached.data, scraped)) {
+			// If the cached watchlist file is not current, regenerate it
+			data = await collectMovieData(scraped);
 			createWatchlistFile(data);
+		} else {
+			console.log('✅ Using cached watchlist file ' + watchlistFile)
 		}
 	}
-	
+
 	createRssFile(data);
 	createUnknowns(data);
 
@@ -273,7 +273,7 @@ function createUnknowns(data) {
 	
 	console.log(
 		'Looking for unknowns... ' +
-		(unknowns.length === 0 ? 'None found' : '⚠️  Found ' + unknowns.length)
+		(unknowns.length === 0 ? '👍 None found' : '⚠️  Found ' + unknowns.length)
 	);
 
 	data = {
